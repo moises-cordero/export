@@ -2,10 +2,24 @@ import pandas as pd
 from bs4 import BeautifulSoup
 
 url = "tables.html"
+title_tag = "h3"
 
-soup = BeautifulSoup(open(url,'r').read(), 'html.parser')
-for h3 in soup.find_all('h3'):
-    title = h3.text.strip()
-    pd_table = pd.read_html(str(h3.parent))[0]
-    columns = list(pd_table.columns)
-    table = pd_table.values.tolist()
+html = open(url,'r').read()
+segments = html.split("<hr>")
+tables_dict = {}
+for s in segments[1:]:
+    soup = BeautifulSoup(s, 'html.parser')
+    try:
+        title = soup.find(title_tag).find("div").text.strip()
+        pd_table = pd.read_html(s)[0]
+        table = pd_table.values.tolist()
+        columns = list(pd_table.columns)
+        tables_dict[title] = {"table": table,
+                              "columns": columns,
+                        }
+    except AttributeError as e:
+        raise ValueError("No title found in this section") from e
+    except ValueError as e:
+        raise ValueError("No table found in this section") from e
+print(tables_dict)
+print()
