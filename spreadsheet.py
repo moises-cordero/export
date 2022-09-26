@@ -13,8 +13,6 @@ from googleapiclient.errors import HttpError
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = '1HJpSC3dG7Hfbk5eEQ7Yi-DoTOoNTDUOaFoVmFaBwIRc'
-SHEET = 'sheet1'
-RANGE = 'A1:C4'
 
 def getCredentials():
     creds = None
@@ -35,41 +33,37 @@ def getCredentials():
             token.write(creds.to_json())
     return creds
 
-def update_sheet(sheet, body):
-    request = sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body)
-    return request.execute()
-
-def add_sheet(spreadsheet, title):
-    res = update_sheet(spreadsheet, {'requests': [{'addSheet': {'properties': {'title': title}}}]})
-    return res['replies'][0]['addSheet']['properties']['sheetId']
-
-def delete_sheet(spreadsheet, sheet_id):
-    update_sheet(spreadsheet, {'requests': [{'deleteSheet': {'sheetId': sheet_id}}]})
-
-def update(new_sheets):
+def create_tabs(new_sheets):
     try:
         creds = getCredentials()
         service = build('sheets', 'v4', credentials=creds)
         spreadsheet = service.spreadsheets()
 
-        # Add an auxiliar spreadsheet
-        aux_sheet_id = add_sheet(spreadsheet, 'aux_sheet')
+        requests = []
 
-        # Delete all the sheets
-        sheet_metadata = spreadsheet.get(spreadsheetId=SPREADSHEET_ID).execute()
-        sheets = [s['properties']['sheetId'] for s in sheet_metadata.get('sheets', '') if s['properties']['title']!='aux_sheet']
+        # Append the request to add the auxiliar sheet
+        requests.append({'addSheet': {'properties': {'title': 'aux_sheet', 'sheetId': 0}}})
+
+        # Append the requests to delete all existing sheets
+        sheets = spreadsheet.get(spreadsheetId=SPREADSHEET_ID).execute().get('sheets', '')
         for s in sheets:
-            delete_sheet(spreadsheet, s)
+            if s['properties']['title'] != 'aux_sheet':
+                requests.append({'deleteSheet': {'sheetId': s['properties']['sheetId']}})
 
-        # Add new sheets
-        for s in new_sheets:
-            add_sheet(spreadsheet, s)
+        # Append the requests to add the new sheets
+        for title in new_sheets:
+            requests.append({'addSheet': {'properties': {'title': title}}})
 
-        # Delete the auxiliar sheet
-        delete_sheet(spreadsheet, aux_sheet_id)
+        # Append the request to delete the auxiliar sheet
+        requests.append({'deleteSheet': {'sheetId': 0}})
+
+        # Apply changes to the spreadsheet
+        spreadsheet.batchcreate_tabs(spreadsheetId=SPREADSHEET_ID, body={'requests': requests}).execute()
     except HttpError as ex:
         raise Exception(f'{ex.error_details}') from ex
 
+def populate_data_to_spreadsheet(data):
+    print(data)
 
 def read():
     creds = getCredentials()
@@ -85,7 +79,7 @@ def read():
             print(s["properties"]["title"])
 
         result = spreadsheet.values().get(spreadsheetId=SPREADSHEET_ID,
-                                    range=f'{SHEET}!{RANGE}').execute()
+                                    range='sheet1!A1:C4').execute()
         values = result.get('values', [])
 
         if not values:
@@ -104,7 +98,7 @@ def read():
 
 def main():
     # read()
-    update(["sheet #1", "sheet #2", "sheet #3"])
+    create_tabs(["sheet #1", "sheet #2", "sheet #3"])
 
 if __name__ == '__main__':
     main()
