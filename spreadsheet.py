@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 import os.path
+import html_tables
 
 # import pandas as pd
 from google.auth.transport.requests import Request
@@ -13,6 +14,7 @@ from googleapiclient.errors import HttpError
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = '1HJpSC3dG7Hfbk5eEQ7Yi-DoTOoNTDUOaFoVmFaBwIRc'
+VALUE_INPUT_OPTION = "RAW" # USER_ENTERED: Parsed / RAW: Not parsed
 
 def getCredentials():
     creds = None
@@ -33,45 +35,58 @@ def getCredentials():
             token.write(creds.to_json())
     return creds
 
-def create_tabs(new_sheets):
+def get_spreadsheet():
+    service = build('sheets', 'v4', credentials=getCredentials())
+    return service.spreadsheets()
+
+def create_tabs(spreadsheet, new_sheets):
+    requests = []
+
+    # Append the request to add the auxiliar sheet
+    requests.append({'addSheet': {'properties': {'title': 'aux_sheet', 'sheetId': 0}}})
+
+    # Append the requests to delete all existing sheets
+    sheets = spreadsheet.get(spreadsheetId=SPREADSHEET_ID).execute().get('sheets', '')
+    for s in sheets:
+        if s['properties']['title'] != 'aux_sheet':
+            requests.append({'deleteSheet': {'sheetId': s['properties']['sheetId']}})
+
+    # Append the requests to add the new sheets
+    for title in new_sheets:
+        requests.append({'addSheet': {'properties': {'title': title}}})
+
+    # Append the request to delete the auxiliar sheet
+    requests.append({'deleteSheet': {'sheetId': 0}})
+
+    # Apply changes to the spreadsheet
+    spreadsheet.batchcreate_tabs(spreadsheetId=SPREADSHEET_ID, body={'requests': requests}).execute()
+
+def populate_data(tabs, data):
     try:
-        creds = getCredentials()
-        service = build('sheets', 'v4', credentials=creds)
-        spreadsheet = service.spreadsheets()
+        spreadsheet = get_spreadsheet()
+        # create_tabs(spreadsheet, tabs)
 
-        requests = []
+        columns = ['Vis', 'Description', 'Table', 'Variables',
+                   'Universe', 'Reason', 'Data_source', 'Image']
+        sheet_data = []
+        for t in tabs:
+            values = [columns]
+            vis = f'{html_tables.VIS_PREFIX} {t}'
+            name_index = data[vis][0].index(html_tables.VIS_NAME_COLUMN)
+            for v in data[vis][1:]:
+                values.append([v[name_index]])
+            print(values)
+            sheet_data.append({'range': f"{t}!A1", 'values': values})
+        body = {'valueInputOption': VALUE_INPUT_OPTION, 'data': sheet_data}
+        spreadsheet.values().batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
 
-        # Append the request to add the auxiliar sheet
-        requests.append({'addSheet': {'properties': {'title': 'aux_sheet', 'sheetId': 0}}})
-
-        # Append the requests to delete all existing sheets
-        sheets = spreadsheet.get(spreadsheetId=SPREADSHEET_ID).execute().get('sheets', '')
-        for s in sheets:
-            if s['properties']['title'] != 'aux_sheet':
-                requests.append({'deleteSheet': {'sheetId': s['properties']['sheetId']}})
-
-        # Append the requests to add the new sheets
-        for title in new_sheets:
-            requests.append({'addSheet': {'properties': {'title': title}}})
-
-        # Append the request to delete the auxiliar sheet
-        requests.append({'deleteSheet': {'sheetId': 0}})
-
-        # Apply changes to the spreadsheet
-        spreadsheet.batchcreate_tabs(spreadsheetId=SPREADSHEET_ID, body={'requests': requests}).execute()
     except HttpError as ex:
         raise Exception(f'{ex.error_details}') from ex
 
-def populate_data_to_spreadsheet(data):
-    print(data)
 
 def read():
-    creds = getCredentials()
     try:
-        service = build('sheets', 'v4', credentials=creds)
-
-        # Call the Sheets API
-        spreadsheet = service.spreadsheets()
+        spreadsheet = get_spreadsheet()
 
         sheet_metadata = spreadsheet.get(spreadsheetId=SPREADSHEET_ID).execute()
         sheets = sheet_metadata.get('sheets', '')
@@ -93,12 +108,7 @@ def read():
         # for row in values:
         #     # Print columns A and E, which correspond to indices 0 and 4.
         #     print('%s, %s' % (row[0], row[2]))
+
+        return values
     except HttpError as ex:
         raise Exception(f'{ex.error_details}') from ex
-
-def main():
-    # read()
-    create_tabs(["sheet #1", "sheet #2", "sheet #3"])
-
-if __name__ == '__main__':
-    main()
