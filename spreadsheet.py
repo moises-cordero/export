@@ -1,20 +1,20 @@
-from __future__ import print_function
-
 import os.path
-import html_tables
 
 # import pandas as pd
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+import html_tables as htmlt
 
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SPREADSHEET_ID = '1HJpSC3dG7Hfbk5eEQ7Yi-DoTOoNTDUOaFoVmFaBwIRc'
-VALUE_INPUT_OPTION = "RAW" # USER_ENTERED: Parsed / RAW: Not parsed
+VALUE_INPUT_OPTION = "RAW" # Options: USER_ENTERED -> Parsed / RAW -> Not parsed
+COLUMNS = ['Vis', 'Description', 'Table', 'Variables', 'Universe', 'Reason', 'Data_source', 'Image']
+DIMENSIONS = {'Vis': 100, 'Description': 300, 'Table': 100, 'Variables': 300,
+              'Universe': 100, 'Reason': 100, 'Data_source': 300, 'Image': 100} 
 
 def getCredentials():
     creds = None
@@ -39,6 +39,33 @@ def get_spreadsheet():
     service = build('sheets', 'v4', credentials=getCredentials())
     return service.spreadsheets()
 
+def setProperties(spreadsheet, sheets):
+    requests = []
+    for sid in sheets.values():
+        requests.append({
+            'repeatCell': {
+                'range': {'sheetId': sid, 'startRowIndex': 0, 'endRowIndex': 1,
+                          'startColumnIndex': 0, 'endColumnIndex': len(COLUMNS)
+                          },
+                'cell': {'userEnteredFormat': {'horizontalAlignment' : 'CENTER',
+                                               'textFormat': {'bold': True}
+                                               }
+                        },
+                'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)'
+            }
+        })
+        for i, col in enumerate(COLUMNS):
+            requests.append({
+                'updateDimensionProperties': {
+                    'range': {'sheetId': sid, 'dimension': 'COLUMNS',
+                              'startIndex': i, 'endIndex': i+1
+                              },
+                    'properties': {'pixelSize': DIMENSIONS[col]},
+                    'fields': 'pixelSize'
+                }
+            })
+    spreadsheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body={'requests': requests}).execute()
+
 def create_tabs(spreadsheet, new_sheets):
     requests = []
 
@@ -58,57 +85,84 @@ def create_tabs(spreadsheet, new_sheets):
     # Append the request to delete the auxiliar sheet
     requests.append({'deleteSheet': {'sheetId': 0}})
 
-    # Apply changes to the spreadsheet
-    spreadsheet.batchcreate_tabs(spreadsheetId=SPREADSHEET_ID, body={'requests': requests}).execute()
+    # Request to update the spreadsheet
+    result = spreadsheet.batchUpdate(spreadsheetId=SPREADSHEET_ID,
+                                     body={'requests': requests}
+                                     ).execute()
+    sheets = {}
+    for r in result['replies']:
+        if r and r['addSheet']['properties']['title'] != 'aux_sheet':
+            sheets[r['addSheet']['properties']['title']] = r['addSheet']['properties']['sheetId']
+    setProperties(spreadsheet, sheets)
+
+    return sheets
+
+def get_values(data, tab_name):
+    values = [COLUMNS] # Row #1: Add the column titles
+
+    # Get data from visualization table
+    vis_table = data[f'{htmlt.VIS_TABLE_PREFIX} {tab_name}'] # Visualization table
+    vis_columns = vis_table[0] # First row that contains the visualization table column titles
+    tab_id = vis_table[1][vis_columns.index(htmlt.TAB_ID_COLUMN)] # Tab id
+    for v in vis_table[1:]: # Iterate over the visualization table
+        vis_name = v[vis_columns.index(htmlt.VIS_NAME_COLUMN)] # Visualization name
+        if isinstance(vis_name, str) and vis_name.replace("'", ""):
+            vis_id = v[vis_table[0].index(htmlt.VIS_ID_COLUNM)] # Visualization id
+
+            # Get data from the last table
+            lt_columns = data[htmlt.LAST_TABLE][0] # Last table columns
+            tc_index = lt_columns.index(htmlt.LAST_TABLE_TABLE_COLUMN) # Table column index
+            vc_index = lt_columns.index(htmlt.LAST_TABLE_VARIABLE_COLUMN) #Variable column index
+            tables = {}
+            for row in data[htmlt.LAST_TABLE][1:]: # Iterate over the last table
+                table_name = row[tc_index]
+                if isinstance(table_name, str) and table_name \
+                and tab_id == row[lt_columns.index(htmlt.TAB_ID_COLUMN)] \
+                and vis_id == row[lt_columns.index(htmlt.VIS_ID_COLUNM)]:
+                    if table_name not in tables:
+                        tables[table_name] = [row[vc_index]]
+                    else:
+                        tables[table_name].append(row[vc_index])
+            for key, variables in tables.items():
+                tab_row = [""]*len(vis_columns) # Create a list with empty values
+                tab_row[COLUMNS.index('Vis')] = vis_name.replace("'", "")
+                tab_row[COLUMNS.index('Table')] = key
+                tab_row[COLUMNS.index('Variables')] = ", ".join(variables)
+                values.append(tab_row)
+    return values
 
 def populate_data(tabs, data):
-    try:
-        spreadsheet = get_spreadsheet()
-        # create_tabs(spreadsheet, tabs)
+    spreadsheet = get_spreadsheet()
+    create_tabs(spreadsheet, tabs) 
+    sheet_data = []
 
-        columns = ['Vis', 'Description', 'Table', 'Variables',
-                   'Universe', 'Reason', 'Data_source', 'Image']
-        sheet_data = []
-        for t in tabs:
-            values = [columns]
-            vis = f'{html_tables.VIS_PREFIX} {t}'
-            name_index = data[vis][0].index(html_tables.VIS_NAME_COLUMN)
-            for v in data[vis][1:]:
-                values.append([v[name_index]])
-            print(values)
-            sheet_data.append({'range': f"{t}!A1", 'values': values})
-        body = {'valueInputOption': VALUE_INPUT_OPTION, 'data': sheet_data}
-        spreadsheet.values().batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
+    # Iterate over the tabs
+    for tab_name in tabs:
+        values = get_values(data, tab_name)
+        sheet_data.append({'range': f"{tab_name}!A1", 'values': values})
+    body = {'valueInputOption': VALUE_INPUT_OPTION, 'data': sheet_data}
 
-    except HttpError as ex:
-        raise Exception(f'{ex.error_details}') from ex
-
+    # Request to update the spreadsheet
+    spreadsheet.values().batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
 
 def read():
-    try:
-        spreadsheet = get_spreadsheet()
+    spreadsheet = get_spreadsheet()
 
-        sheet_metadata = spreadsheet.get(spreadsheetId=SPREADSHEET_ID).execute()
-        sheets = sheet_metadata.get('sheets', '')
-        for s in sheets:
-            print(s["properties"]["title"])
+    sheet_metadata = spreadsheet.get(spreadsheetId=SPREADSHEET_ID).execute()
+    sheets = sheet_metadata.get('sheets', '')
+    for s in sheets:
+        print(s["properties"]["title"])
 
-        result = spreadsheet.values().get(spreadsheetId=SPREADSHEET_ID,
-                                    range='sheet1!A1:C4').execute()
-        values = result.get('values', [])
+    result = spreadsheet.values().get(spreadsheetId=SPREADSHEET_ID,
+                                range='sheet1!A1:C4').execute()
+    values = result.get('values', [])
 
-        if not values:
-            print('No data found.')
-            return
+    if not values:
+        print('No data found.')
+        return None
 
-        # df = pd.DataFrame(values)
-        # print(df)
-        print(values)
-        # print('Name, Major:')
-        # for row in values:
-        #     # Print columns A and E, which correspond to indices 0 and 4.
-        #     print('%s, %s' % (row[0], row[2]))
+    # df = pd.DataFrame(values)
+    # print(df)
+    print(values)
 
-        return values
-    except HttpError as ex:
-        raise Exception(f'{ex.error_details}') from ex
+    return values
