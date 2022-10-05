@@ -9,10 +9,12 @@ TAB_NAME_COLUMN = "DisplayName"
 TAB_ID_COLUMN = "PageIndex"
 VIS_TABLE_PREFIX = "Visuals in"
 VIS_NAME_COLUMN = "Title"
+VIS_REASON_COLUMN = "Visual Type"
 VIS_ID_COLUNM = "VisualIndex"
 LAST_TABLE = "List of all Columns/Fields/Measures/Expressions Used in Visuals"
 LAST_TABLE_TABLE_COLUMN = "Table Name"
-LAST_TABLE_VARIABLE_COLUMN = "Expression"
+LAST_TABLE_VARIABLE_COLUMN = "Name"
+LAST_TABLE_FORMULA_COLUMN = "Expression"
 
 # Get data from the HMTL file
 def extract_data():
